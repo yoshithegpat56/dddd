@@ -1,4 +1,4 @@
--- VERSION 3.2 - FIXED MAIL COST LOGIC & POLISHED
+-- VERSION 4 - FIXED MAIL COST LOGIC & POLISHED
 -- CHANGELOG:
 -- v3.2: Fixed mail cost logic (base price 20k), improved item sorting, added safety checks
 -- v3.1: Multi-item testing for diagnostics
